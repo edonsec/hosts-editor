@@ -1,6 +1,6 @@
 ## Hosts File Editor
 
-Hosts editor is a standalone script for the sole purpose of managing your /etc/hosts file, it allows for multiple profiles and the toggling the active status for a given entry.
+Hosts editor is a standalone script for the sole purpose of managing your /etc/hosts file, it allows for multiple profiles and the toggling of the active status for a given entry.
 
 ### Installation
 
