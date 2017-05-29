@@ -9,43 +9,34 @@ import argparse
 class ExitShell(Exception):
   pass
 
-class HostEntry():
-  domain = ""
-  ipaddr = ""
-  active = False
-
+class HostEntry(object):
   def __init__(self, domain, ipaddr, active):
     self.domain = domain
     self.ipaddr = ipaddr
     self.active = active
 
-class HostFileManager():
+class HostFileManager(object):
   HOST_FILE_PATH = "/etc/hosts"
-  HOST_MANAGER_DEFAULT_FILENAME = "hosts.default"
+  DEFAULT_PROFILE = "default"
 
   base_dir = ""
 
   def __init__(self, base_dir):
     self.base_dir = base_dir
-    self.ensure_setup() 
 
-  def ensure_setup(self):
-    host_manager_original_path = "{}/{}".format(self.base_dir, self.HOST_MANAGER_DEFAULT_FILENAME)
+  def setup(self):
+    default_host_path = self.get_profile_path(self.DEFAULT_PROFILE)
 
     if not os.path.exists(self.base_dir):
       os.mkdir(self.base_dir)
-      copyfile(self.HOST_FILE_PATH, host_manager_original_path) 
+      copyfile(self.HOST_FILE_PATH, default_host_path) 
       
     if not os.path.islink(self.HOST_FILE_PATH):
       move(self.HOST_FILE_PATH, self.HOST_FILE_PATH + ".default")
-      os.symlink(host_manager_original_path, self.HOST_FILE_PATH)
+      os.symlink(default_host_path, self.HOST_FILE_PATH)
 
   def get_profiles(self):
-    entries = []
-    for fname in os.listdir(self.base_dir):
-      entries.append(fname.rsplit(".")[-1])
-
-    return entries
+    return [fname.rsplit(".")[-1] for fname in os.listdir(self.base_dir)]
 
   def get_entries(self, search=None):
     entries = []
@@ -78,8 +69,8 @@ class HostFileManager():
     self.find_entry(domain, lambda entry, f: f.write("#" + entry) if not entry.startswith("#") else f.write(entry[1:]))
 
   def switch_profile(self, name, fresh=False):
-    host_manager_profile_path = "{}/hosts.{}".format(self.base_dir, name)
-    host_manager_original_path = "{}/{}".format(self.base_dir, self.HOST_MANAGER_DEFAULT_FILENAME)
+    profile_path = self.get_profile_path(name)
+    original_path = "{}/{}".format(self.base_dir, self.HOST_MANAGER_DEFAULT_FILENAME)
 
     if not os.path.exists(host_manager_profile_path):
       if fresh:
@@ -92,11 +83,11 @@ class HostFileManager():
       os.symlink(host_manager_profile_path, self.HOST_FILE_PATH)
 
   def remove_profile(self, name):
-    host_manager_profile_path = "{}/hosts.{}".format(self.base_dir, name)
+    profile_path = self.get_profile_path(name)
 
-    if os.path.exists(host_manager_profile_path):
+    if os.path.exists(profile_path):
       self.switch_profile("default")
-      os.unlink(host_manager_profile_path)
+      os.unlink(profile_path)
   
   def find_entry(self, domain, callback):
     with open(self.HOST_FILE_PATH, "r+") as f:
@@ -111,6 +102,9 @@ class HostFileManager():
           f.write(line)
 
       f.truncate()
+
+  def get_profile_path(self, name):
+    return "{}/hosts.{}".format(self.base_dir, name)
 
 class HostShell(cmd.Cmd):
   intro = "Welcome to the Hosts editor shell. Type help or ? to list commands.\n"
@@ -242,6 +236,8 @@ if __name__ == "__main__":
       sys.exit(0)
 
     hostFileManager = HostFileManager("/etc/hosts-editor")
+    hostFileManager.setup()
+ 
     hostShell = HostShell(hostFileManager)
 
     if not args.interactive:
