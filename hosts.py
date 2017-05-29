@@ -70,17 +70,17 @@ class HostFileManager(object):
 
   def switch_profile(self, name, fresh=False):
     profile_path = self.get_profile_path(name)
-    original_path = "{}/{}".format(self.base_dir, self.HOST_MANAGER_DEFAULT_FILENAME)
+    default_path = self.get_profile_path(self.DEFAULT_PROFILE)
 
-    if not os.path.exists(host_manager_profile_path):
+    if not os.path.exists(profile_path):
       if fresh:
-        open(host_manager_profile_path, "w").close()
+        open(profile_path, "w").close()
       else:
-        copyfile(host_manager_original_path, host_manager_profile_path)
+        copyfile(default_path, profile_path)
 
     if os.path.exists(self.HOST_FILE_PATH):
       os.unlink(self.HOST_FILE_PATH)
-      os.symlink(host_manager_profile_path, self.HOST_FILE_PATH)
+      os.symlink(profile_path, self.HOST_FILE_PATH)
 
   def remove_profile(self, name):
     profile_path = self.get_profile_path(name)
