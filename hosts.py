@@ -50,23 +50,20 @@ class HostFileManager(object):
                 if not self.valid_host_entry(parts):
                     continue
 
-                ipaddr, domain = parts
-
-                if not search or (search and parts[1].startswith(search)):
-                    ipaddr_stripped = ipaddr.replace("#", "")
-                    active = True if line[0] != "#" else False
-                    entries.append(HostEntry(domain, ipaddr_stripped, active))
+                if not search or (search and domain.startswith(search)):
+                    ipaddr_stripped = parts[0].replace("#", "")
+                    active = True if parts[0][0] != "#" else False
+                    entries.append(HostEntry(parts[1], ipaddr_stripped, active))
 
         return entries
 
     def valid_host_entry(self, parts):
-        if len(parts) != 2:
+        if len(parts) < 2:
             return False
 
-        ipaddr, domain = parts
         return (
-            re.match("^#?[\d:.]+$", ipaddr)
-            and re.match("^[a-z0-9-.]+$", domain)
+            re.match("^#?[\d:.]+$", parts[0])
+            and re.match("^[a-z0-9-.]+$", parts[1])
         )
 
     def get_active_profile(self):
@@ -90,8 +87,8 @@ class HostFileManager(object):
             fp.write(entry[1:])
 
     def switch_profile(self, name, fresh=False):
-        profile_path = self.get_profile_path(name)
         default_path = self.get_profile_path(self.DEFAULT_PROFILE)
+        profile_path = self.get_profile_path(name)
 
         if not os.path.exists(profile_path):
             if fresh:
@@ -142,8 +139,6 @@ class HostShell(cmd.Cmd):
         self.hostFileManager = hostFileManager
         self.profiles = hostFileManager.get_profiles()
 
-        self.set_prompt_name(self.hostFileManager.get_active_profile())
-
     def do_remove(self, domain):
         """remove <domain> - remove an entry to active profile"""
         self.hostFileManager.remove_entry_by_domain(domain)
@@ -173,26 +168,28 @@ class HostShell(cmd.Cmd):
         self.hostFileManager.toggle_entry_by_domain(domain)
 
     def complete_toggle(self, text, line, begidx, endidx):
-        return [domain.domain for domain in self.hostFileManager.get_entries(search=text)]
+        return [d.domain for d in self.hostFileManager.get_entries(search=text)]
 
     def do_show(self, type):
         """show profiles|hosts - Display either the present profiles or the lists of hosts in a given profile"""
-
-        if type == "profiles":
-            for profile in self.hostFileManager.get_profiles():
-                print "* {}".format(profile)
-        elif type == "hosts":
-            for host in self.hostFileManager.get_entries():
-                print "[{}] {} => {}".format("ACTIVE" if host.active else "INACTIVE", host.domain, host.ipaddr)
+        if type in ["profiles", "hosts"]:
+            self.onecmd(type)
 
     def complete_show(self, text, line, begidx, endidx):
         show_types = ["profiles", "hosts"]
         show = [type for type in show_types if type.startswith(text)]
 
-        if not show:
-            show = show_types
+        return show if show else show_types
 
-        return show
+    def do_profiles(self, args):
+        """profiles - Show list of profiles"""
+        for profile in self.hostFileManager.get_profiles():
+            print "* {}".format(profile)
+
+    def do_hosts(self, args):
+        """hosts - Show list of hosts"""
+        for host in self.hostFileManager.get_entries():
+            print "[{}] {} => {}".format("ACTIVE" if host.active else "INACTIVE", host.domain, host.ipaddr)
 
     def do_profile(self, name):
         """profile <name> [remove|fresh] - Switch to a separate host profile (fresh starts as empty) or delete an existing one"""
@@ -218,13 +215,16 @@ class HostShell(cmd.Cmd):
 
     def complete_profile(self, text, line, begidx, endidx):
         profile_entries = self.hostFileManager.get_profiles()
+        profile_actions = ["remove", "fresh"]
 
-        profiles = [profile for profile in profile_entries if profile.startswith(text)]
+        profiles = [p for p in profile_entries if p.startswith(text)]
 
-        if not profiles:
-            profiles = profile_entries
+        if line.count(" ") == 2:
+            actions = [a for a in profile_actions if a.startswith(text)]
 
-        return profiles
+            return actions if actions else profile_actions
+
+        return profiles if profiles else profile_entries
 
     def do_exit(self, args):
         'Quit from shell'
@@ -254,7 +254,7 @@ if __name__ == "__main__":
         parser.add_argument("--interactive", "-i", help="Interactive mode", action='store_const', const=True)
 
         args = parser.parse_args()
-        has_arg_set = [key for key in args.__dict__ if args.__dict__[key] is not None]
+        has_arg_set = [k for k in args.__dict__ if args.__dict__[k] is not None]
 
         if not has_arg_set:
             parser.print_help()
@@ -264,6 +264,7 @@ if __name__ == "__main__":
         hostFileManager.setup()
 
         hostShell = HostShell(hostFileManager)
+        hostShell.set_prompt_name(hostFileManager.get_active_profile())
 
         if not args.interactive:
             if args.profile:
@@ -279,7 +280,7 @@ if __name__ == "__main__":
                 hostShell.onecmd("remove " + args.remove)
 
             if args.show:
-                    hostShell.onecmd("show " + args.show)
+                hostShell.onecmd("show " + args.show)
 
             if args.update:
                 hostShell.onecmd("update " + " ".join(args.update))
