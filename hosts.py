@@ -155,7 +155,7 @@ class HostShell(cmd.Cmd):
         """create <domain> <ip address> - create an entry on active profile"""
         args = args.split()
         if len(args) != 2:
-            self.onecmd("help add")
+            self.onecmd("help create")
 
         self.hostFileManager.create_entry(args[0], args[1])
 
@@ -163,7 +163,7 @@ class HostShell(cmd.Cmd):
         """update <domain> <ip address> - update an existing entry in active profile"""
         args = args.split()
         if len(args) != 2:
-            self.onecmd("help replace")
+            self.onecmd("help update")
 
         self.hostFileManager.remove_entry_by_domain(args[0])
         self.hostFileManager.create_entry(args[0], args[1])
