@@ -12,59 +12,132 @@ class ExitShell(Exception):
 
 
 class HostEntry(object):
-    def __init__(self, domain, ipaddr, active):
+    def __init__(self, domain, ipaddr, raw, active=False, idx=None):
         self.domain = domain
         self.ipaddr = ipaddr
         self.active = active
+        self.idx = idx
+        self.raw = raw
+
+
+class HostProfileManager(object):
+    DEFAULT_NAME = "default"
+
+    def __init__(self, path, host_file):
+        self.path = path
+        self.host_file = host_file
+
+    def switch(self, name, fresh=False):
+        profile_path = self.add(name, fresh)
+
+        if os.path.exists(self.host_file):
+            os.unlink(self.host_file)
+            os.symlink(profile_path, self.host_file)
+
+    def remove(self, name):
+        profile_path = self.get_profile_path(name)
+
+        if os.path.exists(profile_path):
+            self.switch(self.DEFAULT_NAME)
+            os.unlink(profile_path)
+
+    def add(self, name, fresh=False):
+        default_path = self.get_profile_path(self.DEFAULT_NAME)
+        profile_path = self.get_profile_path(name)
+
+        if not os.path.exists(profile_path):
+            if fresh:
+                open(profile_path, "w").close()
+            else:
+                copyfile(default_path, profile_path)
+
+        return profile_path
+
+    def get_active_profile(self):
+        if os.path.islink(self.host_file):
+            return os.path.realpath(self.host_file).rsplit(".")[-1]
+
+    def get_profile_path(self, name):
+        return "{}/hosts.{}".format(self.path, name)
+
+    def get_path(self):
+        return self.path
+
+
+class FileEditor(object):
+    def __init__(self, path):
+        self._path = path
+        self._delete = []
+        self._edit = []
+
+    def edit_line(self, line, value):
+        self._edit.append([line, value])
+
+        return self
+
+    def delete_line(self, line):
+        self._delete.append(line)
+
+        return self
+
+    def _get_edit_for_line(self, line_no):
+        for edit_line, edit_value in self._edit:
+            if line_no == edit_line:
+                return edit_value
+
+    def write(self):
+        with open(self._path, "r+") as f:
+            lines = f.readlines()
+            f.seek(0)
+            for line_no, line in enumerate(lines):
+                edit_value = self._get_edit_for_line(line_no)
+
+                if edit_value:
+                    f.write(edit_value)
+                    continue
+
+                if line_no not in self._delete:
+                    f.write(line)
+
+            f.truncate()
+
+        self._reset()
+
+    def _reset(self):
+        self._delete = []
+        self._edit = []
 
 
 class HostFileManager(object):
     HOST_FILE_PATH = "/etc/hosts"
     DEFAULT_PROFILE = "default"
 
-    base_dir = ""
-
-    def __init__(self, base_dir):
-        self.base_dir = base_dir
+    def __init__(self, editor, parser_, profile_manager):
+        self.profile_path = profile_manager.get_path()
+        self.parser = parser_
+        self.profile_manager = profile_manager
+        self.editor = editor
+        self.delete_idx = []
 
     def setup(self):
-        default_host_path = self.get_profile_path(self.DEFAULT_PROFILE)
+        default_profile_path = self.profile_manager.get_profile_path(
+            self.DEFAULT_PROFILE)
 
-        if not os.path.exists(self.base_dir):
-            os.mkdir(self.base_dir)
-            copyfile(self.HOST_FILE_PATH, default_host_path)
+        if not os.path.exists(self.profile_path):
+            os.mkdir(self.profile_path)
+            copyfile(self.HOST_FILE_PATH, default_profile_path)
 
         if not os.path.islink(self.HOST_FILE_PATH):
             move(self.HOST_FILE_PATH, self.HOST_FILE_PATH + ".default")
-            os.symlink(default_host_path, self.HOST_FILE_PATH)
+            os.symlink(default_profile_path, self.HOST_FILE_PATH)
 
     def get_profiles(self):
-        return [fname.rsplit(".")[-1] for fname in os.listdir(self.base_dir)]
+        return [fname.rsplit(".")[-1] for fname in os.listdir(self.profile_path)]
 
     def get_entries(self, search=None):
-        entries = []
-        with open(self.HOST_FILE_PATH) as f:
-            for line in f.readlines():
-                parts = re.split("\s+", line)
-
-                if not self.valid_host_entry(parts):
-                    continue
-
-                if not search or (search and domain.startswith(search)):
-                    ipaddr_stripped = parts[0].replace("#", "")
-                    active = True if parts[0][0] != "#" else False
-                    entries.append(HostEntry(parts[1], ipaddr_stripped, active))
-
-        return entries
-
-    def valid_host_entry(self, parts):
-        if len(parts) < 2:
-            return False
-
-        return (
-            re.match("^#?[\d:.]+$", parts[0])
-            and re.match("^[a-z0-9-.]+$", parts[1])
-        )
+        for host in self.parser.get_entries():
+            if not search or (search and host.domain.startswith(search)):
+                yield host
 
     def get_active_profile(self):
         if os.path.islink(self.HOST_FILE_PATH):
@@ -75,55 +148,57 @@ class HostFileManager(object):
             f.write("{} {}\n".format(ip_address, domain))
 
     def remove_entry_by_domain(self, domain):
-        self.find_entry(domain, None)
+        self.find_entry(domain, self.__remove_line)
+
+    def __remove_line(self, entry):
+        self.editor.delete_line(entry.idx).write()
 
     def toggle_entry_by_domain(self, domain):
-        self.find_entry(domain, self.toggle_commented_line)
+        self.find_entry(domain, self._toggle_commented_line)
 
-    def toggle_commented_line(self, entry, fp):
-        if not entry.startswith("#"):
-            fp.write("#" + entry)
-        else:
-            fp.write(entry[1:])
-
-    def switch_profile(self, name, fresh=False):
-        default_path = self.get_profile_path(self.DEFAULT_PROFILE)
-        profile_path = self.get_profile_path(name)
-
-        if not os.path.exists(profile_path):
-            if fresh:
-                open(profile_path, "w").close()
-            else:
-                copyfile(default_path, profile_path)
-
-        if os.path.exists(self.HOST_FILE_PATH):
-            os.unlink(self.HOST_FILE_PATH)
-            os.symlink(profile_path, self.HOST_FILE_PATH)
-
-    def remove_profile(self, name):
-        profile_path = self.get_profile_path(name)
-
-        if os.path.exists(profile_path):
-            self.switch_profile("default")
-            os.unlink(profile_path)
+    def _toggle_commented_line(self, entry):
+        edit = "#{}".format(entry.raw) if entry.active else entry.raw[1:]
+        self.editor.edit_line(entry.idx, edit).write()
 
     def find_entry(self, domain, callback):
-        with open(self.HOST_FILE_PATH, "r+") as f:
-            lines = f.readlines()
-            f.seek(0)
-            for line in lines:
+        for entry in self.get_entries():
+            if entry.domain == domain:
+                if callback:
+                    callback(entry)
+
+    def is_matched_domain(self, domain, subject):
+        return domain == subject or subject == "#{}".format(domain)
+
+
+class HostFileParser(object):
+    def __init__(self, path):
+        self.path = path
+
+    def get_entries(self):
+        with open(self.path) as f:
+            for idx, line in enumerate(f.readlines()):
                 entry = re.split("\s", line)
 
-                if entry[1] == domain or entry[1] == "#{}".format(domain):
-                    if callback:
-                        callback(line, f)
-                else:
-                    f.write(line)
+                if not self.valid_host_entry(entry):
+                    continue
 
-            f.truncate()
+                active = not self.is_comment(entry[0])
+                yield HostEntry(entry[1], self.strip_comment(entry[0]), line, active, idx=idx)
 
-    def get_profile_path(self, name):
-        return "{}/hosts.{}".format(self.base_dir, name)
+    def strip_comment(self, line):
+        return line[1:] if line[0] == "#" else line
+
+    def is_comment(self, line):
+        return line[0] == "#"
+
+    def valid_host_entry(self, parts):
+        if len(parts) < 2:
+            return False
+
+        return (
+            re.match("^#?[\d:.]+$", parts[0])
+            and re.match("^[a-z0-9-.]+$", parts[1])
+        )
 
 
 class HostShell(cmd.Cmd):
@@ -134,46 +209,67 @@ class HostShell(cmd.Cmd):
     hostFileManager = None
     profiles = []
 
-    def __init__(self, hostFileManager):
+    def __init__(self, hostFileManager, hostProfileManager):
         cmd.Cmd.__init__(self)
         self.hostFileManager = hostFileManager
+        self.hostProfileManager = hostProfileManager
         self.profiles = hostFileManager.get_profiles()
 
     def do_remove(self, domain):
-        """remove <domain> - remove an entry to active profile"""
+        if not domain:
+            self.onecmd("help remove")
+            return
+
         self.hostFileManager.remove_entry_by_domain(domain)
 
     def complete_remove(self, text, line, begidx, endidx):
         return [d.domain for d in self.hostFileManager.get_entries(search=text)]
 
-    def do_create(self, args):
-        """create <domain> <ip address> - create an entry on active profile"""
-        args = args.split()
-        if len(args) != 2:
-            self.onecmd("help create")
+    def help_remove(self):
+        print("remove <domain> - remove an entry to active profile")
 
-        self.hostFileManager.create_entry(args[0], args[1])
+    def do_create(self, args):
+        argsplit = args.split()
+        if len(argsplit) != 2:
+            self.onecmd("help create")
+            return
+
+        self.hostFileManager.create_entry(argsplit[0], argsplit[1])
+
+    def help_create(self):
+        print("create <domain> <ip address> - create an entry on active profile")
 
     def do_update(self, args):
-        """update <domain> <ip address> - update an existing entry in active profile"""
-        args = args.split()
-        if len(args) != 2:
-            self.onecmd("help update")
+        argsplit = args.split()
 
-        self.hostFileManager.remove_entry_by_domain(args[0])
-        self.hostFileManager.create_entry(args[0], args[1])
+        if not args or len(argsplit) != 2:
+            self.onecmd("help update")
+            return
+
+        self.hostFileManager.remove_entry_by_domain(argsplit[0])
+        self.hostFileManager.create_entry(argsplit[0], argsplit[1])
+
+    def help_update(self):
+        print("update <domain> <ip address> - update an existing entry in active profile")
 
     def do_toggle(self, domain):
-        """toggle <domain> - toggle enabled status in hosts file"""
+        if not domain:
+            self.onecmd("help toggle")
+            return
+
         self.hostFileManager.toggle_entry_by_domain(domain)
 
     def complete_toggle(self, text, line, begidx, endidx):
         return [d.domain for d in self.hostFileManager.get_entries(search=text)]
 
+    def help_toggle(self):
+        print("toggle <domain> - toggle enabled status in hosts file")
+
     def do_show(self, type):
-        """show profiles|hosts - Display either the present profiles or the lists of hosts in a given profile"""
         if type in ["profiles", "hosts"]:
             self.onecmd(type)
+        else:
+            self.onecmd("help show")
 
     def complete_show(self, text, line, begidx, endidx):
         show_types = ["profiles", "hosts"]
@@ -181,37 +277,41 @@ class HostShell(cmd.Cmd):
 
         return show if show else show_types
 
+    def help_show(self):
+        print("show profiles|hosts - Display either the present profiles or the lists of hosts in a given profile")
+
     def do_profiles(self, args):
-        """profiles - Show list of profiles"""
         for profile in self.hostFileManager.get_profiles():
-            print "* {}".format(profile)
+            print("* {}".format(profile))
+
+    def help_profiles(self):
+        print("profiles - Show list of profiles")
 
     def do_hosts(self, args):
-        """hosts - Show list of hosts"""
         for host in self.hostFileManager.get_entries():
-            print "[{}] {} => {}".format("ACTIVE" if host.active else "INACTIVE", host.domain, host.ipaddr)
+            print("[{}] {} => {}".format("ACTIVE" if host.active else "INACTIVE", host.domain, host.ipaddr))
 
-    def do_profile(self, name):
-        """profile <name> [remove|fresh] - Switch to a separate host profile (fresh starts as empty) or delete an existing one"""
-        args = name.split()
+    def help_hosts(self):
+        print("hosts - Show list of hosts")
+
+    def do_profile(self, args):
+        argsplit = args.split()
         status = False
 
-        if len(args) == 1:
-            name = args[0]
-        elif len(args) == 2:
-            name, status = args
+        if len(argsplit) == 1:
+            args = argsplit[0]
+        elif len(argsplit) == 2:
+            args, status = argsplit
         else:
             self.onecmd("help profile")
 
-        if status == "remove":
-            self.hostFileManager.remove_profile(name)
-            self.set_prompt_name("default")
-        elif status == "fresh":
-            self.hostFileManager.switch_profile(name, fresh=True)
-            self.set_prompt_name(name)
-        else:
-            self.hostFileManager.switch_profile(name)
-            self.set_prompt_name(name)
+        commands = {
+            "remove": self._do_profile_remove,
+            "fresh": self._do_profile_fresh,
+            "default": self._do_profile_switch
+        }
+
+        commands.get(status, commands["default"])(args)
 
     def complete_profile(self, text, line, begidx, endidx):
         profile_entries = self.hostFileManager.get_profiles()
@@ -226,12 +326,29 @@ class HostShell(cmd.Cmd):
 
         return profiles if profiles else profile_entries
 
+    def help_profile(self):
+        print("profile <name> [remove|fresh] - Profile management, switch, remove and create new")
+
     def do_exit(self, args):
-        'Quit from shell'
         raise ExitShell
+
+    def help_exit(self):
+        print("Quit from shell")
 
     def set_prompt_name(self, name):
         self.prompt = "hosts/{}> ".format(name)
+
+    def _do_profile_remove(self, name):
+        self.hostProfileManager.remove(name)
+        self.set_prompt_name("default")
+
+    def _do_profile_fresh(self, name):
+        self.hostProfileManager.switch(name, fresh=True)
+        self.set_prompt_name(name)
+
+    def _do_profile_switch(self, name):
+        self.hostProfileManager.switch(name)
+        self.set_prompt_name(name)
 
     do_quit = do_exit
     do_EOF = do_exit
@@ -239,16 +356,18 @@ class HostShell(cmd.Cmd):
 
 if __name__ == "__main__":
     if os.geteuid() != 0:
-        print "This script must be run as root"
+        print("This script must be run as root")
         sys.exit()
 
     parser = argparse.ArgumentParser()
 
     try:
         parser.add_argument("--profile", "-p", help="Specify profile", metavar=("PROFILE"))
-        parser.add_argument("--create", "-c", nargs=2, help="Create host entry; Args: <domain> <ip address>", metavar=("DOMAIN", "IP_ADDRESS"))
+        parser.add_argument("--create", "-c", nargs=2, help="Create host entry; Args: <domain> <ip address>",
+                            metavar=("DOMAIN", "IP_ADDRESS"))
         parser.add_argument("--remove", "-r", help="Remove host entry by domain", metavar=("DOMAIN"))
-        parser.add_argument("--update", "-u", nargs=2, help="Update existing host entry", metavar=("DOMAIN", "IP_ADDRESS"))
+        parser.add_argument("--update", "-u", nargs=2, help="Update existing host entry",
+                            metavar=("DOMAIN", "IP_ADDRESS"))
         parser.add_argument("--toggle", "-t", help="Toggle host entry by domain", metavar=("DOMAIN"))
         parser.add_argument("--show", "-s", help="Show hosts or profiles", choices=["hosts", "profiles"])
         parser.add_argument("--interactive", "-i", help="Interactive mode", action='store_const', const=True)
@@ -260,10 +379,15 @@ if __name__ == "__main__":
             parser.print_help()
             sys.exit(0)
 
-        hostFileManager = HostFileManager("/etc/hosts-editor")
+        hostManagerPath = "/etc/hosts-editor"
+        hostFileParser = HostFileParser(HostFileManager.HOST_FILE_PATH)
+        hostFileEditor = FileEditor(HostFileManager.HOST_FILE_PATH)
+        hostProfileManager = HostProfileManager(hostManagerPath, HostFileManager.HOST_FILE_PATH)
+
+        hostFileManager = HostFileManager(hostFileEditor, hostFileParser, hostProfileManager)
         hostFileManager.setup()
 
-        hostShell = HostShell(hostFileManager)
+        hostShell = HostShell(hostFileManager, hostProfileManager)
         hostShell.set_prompt_name(hostFileManager.get_active_profile())
 
         if not args.interactive:
@@ -286,6 +410,5 @@ if __name__ == "__main__":
                 hostShell.onecmd("update " + " ".join(args.update))
         else:
             hostShell.cmdloop()
-
     except ExitShell:
         pass
