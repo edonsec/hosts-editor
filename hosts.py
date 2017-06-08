@@ -113,18 +113,17 @@ class HostFileManager(object):
     DEFAULT_PROFILE = "default"
 
     def __init__(self, editor, parser_, profile_manager):
-        self.profile_path = profile_manager.get_path()
-        self.parser = parser_
-        self.profile_manager = profile_manager
-        self.editor = editor
-        self.delete_idx = []
+        self._profile_path = profile_manager.get_path()
+        self._parser = parser_
+        self._profile_manager = profile_manager
+        self._editor = editor
 
     def setup(self):
-        default_profile_path = self.profile_manager.get_profile_path(
+        default_profile_path = self._profile_manager.get_profile_path(
             self.DEFAULT_PROFILE)
 
-        if not os.path.exists(self.profile_path):
-            os.mkdir(self.profile_path)
+        if not os.path.exists(self._profile_path):
+            os.mkdir(self._profile_path)
             copyfile(self.HOST_FILE_PATH, default_profile_path)
 
         if not os.path.islink(self.HOST_FILE_PATH):
@@ -132,10 +131,10 @@ class HostFileManager(object):
             os.symlink(default_profile_path, self.HOST_FILE_PATH)
 
     def get_profiles(self):
-        return [fname.rsplit(".")[-1] for fname in os.listdir(self.profile_path)]
+        return [fname.rsplit(".")[-1] for fname in os.listdir(self._profile_path)]
 
     def get_entries(self, search=None):
-        for host in self.parser.get_entries():
+        for host in self._parser.get_entries():
             if not search or (search and host.domain.startswith(search)):
                 yield host
 
@@ -151,14 +150,14 @@ class HostFileManager(object):
         self.find_entry(domain, self.__remove_line)
 
     def __remove_line(self, entry):
-        self.editor.delete_line(entry.idx).write()
+        self._editor.delete_line(entry.idx).write()
 
     def toggle_entry_by_domain(self, domain):
         self.find_entry(domain, self._toggle_commented_line)
 
     def _toggle_commented_line(self, entry):
         edit = "#{}".format(entry.raw) if entry.active else entry.raw[1:]
-        self.editor.edit_line(entry.idx, edit).write()
+        self._editor.edit_line(entry.idx, edit).write()
 
     def find_entry(self, domain, callback):
         for entry in self.get_entries():
@@ -206,24 +205,22 @@ class HostShell(cmd.Cmd):
             "Type help or ? to list commands.\n"
     prompt = "hosts> "
     file = None
-    hostFileManager = None
-    profiles = []
 
-    def __init__(self, hostFileManager, hostProfileManager):
+    def __init__(self, file_manager, profile_manager):
         cmd.Cmd.__init__(self)
-        self.hostFileManager = hostFileManager
-        self.hostProfileManager = hostProfileManager
-        self.profiles = hostFileManager.get_profiles()
+        self._file_manager = file_manager
+        self._profile_manager = profile_manager
+        self._profiles = file_manager.get_profiles()
 
     def do_remove(self, domain):
         if not domain:
             self.onecmd("help remove")
             return
 
-        self.hostFileManager.remove_entry_by_domain(domain)
+        self._file_manager.remove_entry_by_domain(domain)
 
     def complete_remove(self, text, line, begidx, endidx):
-        return [d.domain for d in self.hostFileManager.get_entries(search=text)]
+        return [d.domain for d in self._file_manager.get_entries(search=text)]
 
     def help_remove(self):
         print("remove <domain> - remove an entry to active profile")
@@ -234,7 +231,7 @@ class HostShell(cmd.Cmd):
             self.onecmd("help create")
             return
 
-        self.hostFileManager.create_entry(argsplit[0], argsplit[1])
+        self._file_manager.create_entry(argsplit[0], argsplit[1])
 
     def help_create(self):
         print("create <domain> <ip address> - create an entry on active profile")
@@ -246,8 +243,8 @@ class HostShell(cmd.Cmd):
             self.onecmd("help update")
             return
 
-        self.hostFileManager.remove_entry_by_domain(argsplit[0])
-        self.hostFileManager.create_entry(argsplit[0], argsplit[1])
+        self._file_manager.remove_entry_by_domain(argsplit[0])
+        self._file_manager.create_entry(argsplit[0], argsplit[1])
 
     def help_update(self):
         print("update <domain> <ip address> - update an existing entry in active profile")
@@ -257,10 +254,10 @@ class HostShell(cmd.Cmd):
             self.onecmd("help toggle")
             return
 
-        self.hostFileManager.toggle_entry_by_domain(domain)
+        self._file_manager.toggle_entry_by_domain(domain)
 
     def complete_toggle(self, text, line, begidx, endidx):
-        return [d.domain for d in self.hostFileManager.get_entries(search=text)]
+        return [d.domain for d in self._file_manager.get_entries(search=text)]
 
     def help_toggle(self):
         print("toggle <domain> - toggle enabled status in hosts file")
@@ -281,14 +278,14 @@ class HostShell(cmd.Cmd):
         print("show profiles|hosts - Display either the present profiles or the lists of hosts in a given profile")
 
     def do_profiles(self, args):
-        for profile in self.hostFileManager.get_profiles():
+        for profile in self._file_manager.get_profiles():
             print("* {}".format(profile))
 
     def help_profiles(self):
         print("profiles - Show list of profiles")
 
     def do_hosts(self, args):
-        for host in self.hostFileManager.get_entries():
+        for host in self._file_manager.get_entries():
             print("[{}] {} => {}".format("ACTIVE" if host.active else "INACTIVE", host.domain, host.ipaddr))
 
     def help_hosts(self):
@@ -314,7 +311,7 @@ class HostShell(cmd.Cmd):
         commands.get(status, commands["default"])(args)
 
     def complete_profile(self, text, line, begidx, endidx):
-        profile_entries = self.hostFileManager.get_profiles()
+        profile_entries = self._file_manager.get_profiles()
         profile_actions = ["remove", "fresh"]
 
         profiles = [p for p in profile_entries if p.startswith(text)]
@@ -339,15 +336,15 @@ class HostShell(cmd.Cmd):
         self.prompt = "hosts/{}> ".format(name)
 
     def _do_profile_remove(self, name):
-        self.hostProfileManager.remove(name)
+        self._profile_manager.remove(name)
         self.set_prompt_name("default")
 
     def _do_profile_fresh(self, name):
-        self.hostProfileManager.switch(name, fresh=True)
+        self._profile_manager.switch(name, fresh=True)
         self.set_prompt_name(name)
 
     def _do_profile_switch(self, name):
-        self.hostProfileManager.switch(name)
+        self._profile_manager.switch(name)
         self.set_prompt_name(name)
 
     do_quit = do_exit
