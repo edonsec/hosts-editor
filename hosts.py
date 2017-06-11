@@ -24,15 +24,15 @@ class HostProfileManager(object):
     DEFAULT_NAME = "default"
 
     def __init__(self, path, host_file):
-        self.path = path
-        self.host_file = host_file
+        self._path = path
+        self._host_file = host_file
 
     def switch(self, name, fresh=False):
         profile_path = self.add(name, fresh)
 
-        if os.path.exists(self.host_file):
-            os.unlink(self.host_file)
-            os.symlink(profile_path, self.host_file)
+        if os.path.exists(self._host_file):
+            os.unlink(self._host_file)
+            os.symlink(profile_path, self._host_file)
 
     def remove(self, name):
         profile_path = self.get_profile_path(name)
@@ -54,14 +54,14 @@ class HostProfileManager(object):
         return profile_path
 
     def get_active_profile(self):
-        if os.path.islink(self.host_file):
-            return os.path.realpath(self.host_file).rsplit(".")[-1]
+        if os.path.islink(self._host_file):
+            return os.path.realpath(self._host_file).rsplit(".")[-1]
 
     def get_profile_path(self, name):
-        return "{}/hosts.{}".format(self.path, name)
+        return "{}/hosts.{}".format(self._path, name)
 
     def get_path(self):
-        return self.path
+        return self._path
 
 
 class FileEditor(object):
