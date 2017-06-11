@@ -147,9 +147,9 @@ class HostFileManager(object):
             f.write("{} {}\n".format(ip_address, domain))
 
     def remove_entry_by_domain(self, domain):
-        self.find_entry(domain, self.__remove_line)
+        self.find_entry(domain, self._remove_line)
 
-    def __remove_line(self, entry):
+    def _remove_line(self, entry):
         self._editor.delete_line(entry.idx).write()
 
     def toggle_entry_by_domain(self, domain):
